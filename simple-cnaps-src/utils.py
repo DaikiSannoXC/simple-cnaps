@@ -117,6 +117,17 @@ def aggregate_accuracy(test_logits_sample, test_labels):
     averaged_predictions = torch.logsumexp(test_logits_sample, dim=0)
     return torch.mean(torch.eq(test_labels, torch.argmax(averaged_predictions, dim=-1)).float())
 
+def logits_to_category(logits):
+    """Compute predicted category from logits.
+
+    Arguments:
+        logits(torch.Tensor): 3-dimensional tensor of logits.
+
+    Returns(torch.Tensor):
+        1-dimentsional tensor of predicted category.
+    """
+    return torch.argmax(torch.logsumexp(logits, dim=0), dim=-1)
+
 def linear_classifier(x, param_dict, num_samples):
     """
     Classifier.

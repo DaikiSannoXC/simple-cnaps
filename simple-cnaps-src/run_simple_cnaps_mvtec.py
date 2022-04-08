@@ -1,9 +1,10 @@
+from collections import defaultdict
 import torch
 import numpy as np
 import argparse
 import os
 import sys
-from utils import print_and_log, get_log_files, ValidationAccuracies, loss, aggregate_accuracy
+from utils import print_and_log, get_log_files, ValidationAccuracies, loss, logits_to_category
 from simple_cnaps import SimpleCnaps
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Quiet TensorFlow warnings
 import tensorflow as tf
@@ -40,7 +41,6 @@ class Learner:
         self.imagenet_subset.load_list(phase='test')
 
         self.loss = loss
-        self.accuracy_fn = aggregate_accuracy
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
         self.optimizer.zero_grad()
 
@@ -98,22 +98,37 @@ class Learner:
 
         with torch.no_grad():
             accuracies = []
+            category_count = defaultdict(int)
+            predict_count = defaultdict(int)
+            category_correct_count = defaultdict(int)
             for idx in range(NUM_TEST_TASKS):
-                context_images, context_labels, target_images, target_labels = \
-                    self.imagenet_subset.get_batch(phase='test', idx=idx)
-                context_images = torch.from_numpy(context_images).permute(0,3,1,2).cuda(0).float()
+                context_images, context_labels, context_label_names, target_images, target_labels, \
+                target_label_names = self.imagenet_subset.get_batch(phase='test', idx=idx)
+                context_images = torch.from_numpy(context_images).permute(0,3,1,2).cuda(0).float().contiguous()
                 context_labels = torch.argmax(torch.from_numpy(context_labels), dim=1).cuda(0)
-                target_images = torch.from_numpy(target_images).permute(0,3,1,2).cuda(0).float()
+                target_images = torch.from_numpy(target_images).permute(0,3,1,2).cuda(0).float().contiguous()
                 target_labels = torch.argmax(torch.from_numpy(target_labels), dim=1).cuda(0)
                 target_logits = self.model(context_images, context_labels, target_images)
-                accuracy = self.accuracy_fn(target_logits, target_labels)
-                accuracies.append(accuracy.item())
+                category_predictions = logits_to_category(target_logits)
+                corrects = torch.eq(target_labels, category_predictions)
+                accuracies.append(torch.mean(corrects.float()).item())
+                for label_name, prediction, correct in zip(target_label_names, category_predictions, corrects):
+                    category_count[label_name] += 1
+                    category_correct_count[label_name] += correct.item()
+                    predict_count[f'{label_name}_{}'] += 1
                 del target_logits
                 if idx + 1 % 100 == 0:
                     print(f"{idx + 1} tasks done")
             accuracy = np.array(accuracies).mean() * 100.0
             confidence = (196.0 * np.array(accuracies).std()) / np.sqrt(len(accuracies))
             print("Test Accuracy:", accuracy, "Confidence:", confidence)
+            for label_name in target_label_names:
+                if category_count[label_name] > 0:
+                    category_accuracy = category_correct_count[label_name] / category_count[label_name]
+                else:
+                    category_accuracy = 0
+                print(f"Test Accuracy of {label_name}: {category_accuracy} "
+                      f"({category_correct_count[label_name]} / {category_count[label_name]})")
 
     def use_two_gpus(self):
         use_two_gpus = False
