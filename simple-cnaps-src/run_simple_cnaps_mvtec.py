@@ -101,6 +101,7 @@ class Learner:
             category_count = defaultdict(int)
             predict_count = defaultdict(int)
             category_correct_count = defaultdict(int)
+            confusion_matrix = defaultdict(lambda: defaultdict(int))
             for idx in range(NUM_TEST_TASKS):
                 context_images, context_labels, context_label_names, target_images, target_labels, \
                 target_label_names = self.imagenet_subset.get_batch(phase='test', idx=idx)
@@ -112,23 +113,31 @@ class Learner:
                 category_predictions = logits_to_category(target_logits)
                 corrects = torch.eq(target_labels, category_predictions)
                 accuracies.append(torch.mean(corrects.float()).item())
+                index_to_label_names = {}
+                for i in range(self.args.ways):
+                    index_to_label_names[target_labels[i].item()] = target_label_names[i]
                 for label_name, prediction, correct in zip(target_label_names, category_predictions, corrects):
                     category_count[label_name] += 1
                     category_correct_count[label_name] += correct.item()
-                    predict_count[f'{label_name}_{}'] += 1
+                    confusion_matrix[label_name][index_to_label_names[prediction.item()]] += 1
                 del target_logits
                 if idx + 1 % 100 == 0:
                     print(f"{idx + 1} tasks done")
             accuracy = np.array(accuracies).mean() * 100.0
             confidence = (196.0 * np.array(accuracies).std()) / np.sqrt(len(accuracies))
             print("Test Accuracy:", accuracy, "Confidence:", confidence)
-            for label_name in target_label_names:
+            for label_name in category_count.keys():
                 if category_count[label_name] > 0:
                     category_accuracy = category_correct_count[label_name] / category_count[label_name]
                 else:
                     category_accuracy = 0
                 print(f"Test Accuracy of {label_name}: {category_accuracy} "
                       f"({category_correct_count[label_name]} / {category_count[label_name]})")
+            sorted_label_names = sorted(list(category_count.keys()))
+            for true_label_name in sorted_label_names:
+                print(true_label_name, [confusion_matrix[true_label_name][prediction_label_name]
+                                        for prediction_label_name in sorted_label_names])
+
 
     def use_two_gpus(self):
         use_two_gpus = False
